@@ -1,0 +1,218 @@
+"""Minimal Shopify Admin GraphQL client for the "Push to Shopify" direct-listing mode.
+
+Handles exactly what the direct-listing flow needs: find a product by its
+LPN (stored in the Barcode field), then create or update it -- title, body
+HTML, price/barcode/sku/weight on the default variant, the custom
+metafields, and (create only) gallery images.
+"""
+
+import json
+
+import requests
+
+from . import config
+
+GRAPHQL_TIMEOUT = 30
+
+
+class ShopifyError(Exception):
+    pass
+
+
+def _load_credentials():
+    with open(config.SHOPIFY_CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+        creds = json.load(f)
+    return creds["shop"], creds["access_token"]
+
+
+def get_shop_domain():
+    shop, _ = _load_credentials()
+    return shop
+
+
+def _graphql(query, variables=None):
+    shop, token = _load_credentials()
+    url = f"https://{shop}/admin/api/{config.SHOPIFY_API_VERSION}/graphql.json"
+    resp = requests.post(
+        url,
+        json={"query": query, "variables": variables or {}},
+        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+        timeout=GRAPHQL_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "errors" in data:
+        raise ShopifyError(str(data["errors"]))
+    return data["data"]
+
+
+def _check_user_errors(payload, mutation_name):
+    errors = payload.get(mutation_name, {}).get("userErrors") or []
+    if errors:
+        raise ShopifyError(f"{mutation_name}: {errors}")
+
+
+def find_variant_by_barcode(barcode):
+    """Returns (product_gid, variant_gid) for an existing product matching this
+    barcode, or (None, None) if nothing matches."""
+    escaped = barcode.replace('"', '\\"')
+    query = """
+    query($search: String!) {
+      productVariants(first: 1, query: $search) {
+        edges { node { id product { id } } }
+      }
+    }
+    """
+    data = _graphql(query, {"search": f'barcode:"{escaped}"'})
+    edges = data["productVariants"]["edges"]
+    if not edges:
+        return None, None
+    node = edges[0]["node"]
+    return node["product"]["id"], node["id"]
+
+
+def _create_product(payload):
+    query = """
+    mutation($input: ProductInput!) {
+      productCreate(input: $input) {
+        product { id variants(first: 1) { edges { node { id } } } }
+        userErrors { field message }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "title": payload["title"],
+            "descriptionHtml": payload["body_html"],
+            "status": "DRAFT",
+        }
+    }
+    data = _graphql(query, variables)
+    _check_user_errors(data, "productCreate")
+    product = data["productCreate"]["product"]
+    variant_id = product["variants"]["edges"][0]["node"]["id"]
+    return product["id"], variant_id
+
+
+def _update_product(product_id, payload):
+    query = """
+    mutation($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product { id }
+        userErrors { field message }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "id": product_id,
+            "title": payload["title"],
+            "descriptionHtml": payload["body_html"],
+        }
+    }
+    data = _graphql(query, variables)
+    _check_user_errors(data, "productUpdate")
+
+
+def _update_variant(product_id, variant_id, payload):
+    inventory_item = {}
+    if payload.get("sku"):
+        inventory_item["sku"] = payload["sku"]
+    if payload.get("weight") is not None:
+        inventory_item["measurement"] = {
+            "weight": {"value": float(payload["weight"]), "unit": "KILOGRAMS"}
+        }
+
+    variant_input = {"id": variant_id}
+    if payload.get("barcode"):
+        variant_input["barcode"] = payload["barcode"]
+    if payload.get("price"):
+        variant_input["price"] = str(payload["price"])
+    if inventory_item:
+        variant_input["inventoryItem"] = inventory_item
+
+    if len(variant_input) == 1:
+        return  # nothing to set beyond the id
+
+    query = """
+    mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        productVariants { id }
+        userErrors { field message }
+      }
+    }
+    """
+    data = _graphql(query, {"productId": product_id, "variants": [variant_input]})
+    _check_user_errors(data, "productVariantsBulkUpdate")
+
+
+def _metafield_value(slot, value):
+    if slot == "rating_count":
+        return "number_integer", str(int(value))
+    return "single_line_text_field", str(value)
+
+
+def _set_metafields(product_id, payload):
+    metafields = []
+    for slot, (namespace, key) in config.SHOPIFY_METAFIELDS.items():
+        value = payload.get(slot)
+        if value is None or value == "":
+            continue
+        mtype, mvalue = _metafield_value(slot, value)
+        metafields.append(
+            {"ownerId": product_id, "namespace": namespace, "key": key, "type": mtype, "value": mvalue}
+        )
+
+    if not metafields:
+        return
+
+    query = """
+    mutation($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields { id }
+        userErrors { field message }
+      }
+    }
+    """
+    data = _graphql(query, {"metafields": metafields})
+    _check_user_errors(data, "metafieldsSet")
+
+
+def _add_images(product_id, images):
+    if not images:
+        return
+    media = [{"originalSource": url, "mediaContentType": "IMAGE"} for url in images]
+    query = """
+    mutation($productId: ID!, $media: [CreateMediaInput!]!) {
+      productCreateMedia(productId: $productId, media: $media) {
+        media { alt }
+        mediaUserErrors { field message }
+      }
+    }
+    """
+    data = _graphql(query, {"productId": product_id, "media": media})
+    errors = data.get("productCreateMedia", {}).get("mediaUserErrors") or []
+    if errors:
+        raise ShopifyError(f"productCreateMedia: {errors}")
+
+
+def push_product(payload):
+    """Creates or updates a Shopify product from a payload built by shopify_io.py.
+
+    Matches on payload["barcode"] (the LPN). Returns
+    {"status": "created"|"updated", "product_id": "gid://..."}.
+    """
+    barcode = payload["barcode"]
+    existing_product_id, existing_variant_id = find_variant_by_barcode(barcode)
+
+    if existing_product_id:
+        _update_product(existing_product_id, payload)
+        _update_variant(existing_product_id, existing_variant_id, payload)
+        _set_metafields(existing_product_id, payload)
+        return {"status": "updated", "product_id": existing_product_id}
+
+    product_id, variant_id = _create_product(payload)
+    _update_variant(product_id, variant_id, payload)
+    _set_metafields(product_id, payload)
+    _add_images(product_id, payload.get("images") or [])
+    return {"status": "created", "product_id": product_id}

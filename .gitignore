@@ -1,0 +1,23 @@
+# Secrets -- never commit these
+amazon_enricher/.shopify_credentials.json
+amazon_enricher/.session_state.json
+shopify_oauth_helper/
+shopify_app_link/
+shopify_app_v2/
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime / user data
+uploads/
+outputs/
+server.log
+server.err.log
+server.pid
+
+# Editor / tooling
+.claude/
+
+# Stray duplicate copy of this whole project (not the real working tree)
+/ccustom crawler and excel generator/

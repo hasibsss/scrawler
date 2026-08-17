@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amazon Product Enricher</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="brand">
+        <span class="brand-mark">A</span>
+        <div>
+          <h1>Amazon Product Enricher</h1>
+          <p class="subtitle">Upload a sheet &mdash; get products filled in with images, descriptions and specs from Amazon.</p>
+        </div>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab-btn active" data-tab="matrixify" type="button">Matrixify Export</button>
+      <button class="tab-btn" data-tab="direct" type="button">Push to Shopify</button>
+    </nav>
+
+    <main class="content">
+      <!-- ==================== TAB: MATRIXIFY EXPORT ==================== -->
+      <div class="tab-panel active" id="tab-matrixify">
+        <!-- STEP 1: UPLOAD -->
+        <section class="card" id="upload-card">
+          <div class="dropzone" id="dropzone" tabindex="0">
+            <input type="file" id="file-input" accept=".xlsx" hidden />
+            <div class="dropzone-inner">
+              <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 16V4M12 4L7 9M12 4L17 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M4 16V18C4 19.1 4.9 20 6 20H18C19.1 20 20 19.1 20 18V16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <p class="dropzone-text"><strong>Drop your Matrixify .xlsx file here</strong> or click to browse</p>
+              <p class="dropzone-hint">The sheet needs an ASIN column &mdash; everything else is filled in automatically.</p>
+            </div>
+          </div>
+
+          <div class="selected-file" id="selected-file" hidden>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="file-icon">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            <span id="selected-file-name"></span>
+            <button class="link-btn" id="clear-file-btn" type="button">Change file</button>
+          </div>
+
+          <p class="error-text" id="upload-error" hidden></p>
+
+          <details class="advanced">
+            <summary>Advanced options</summary>
+            <div class="advanced-grid">
+              <label>Amazon domain
+                <input type="text" id="opt-domain" placeholder="amazon.co.uk" />
+              </label>
+              <label>ASIN column
+                <input type="text" id="opt-asin-column" placeholder="auto-detect" />
+              </label>
+              <label>Sheet name
+                <input type="text" id="opt-sheet" placeholder="auto-detect" />
+              </label>
+              <label>Limit rows
+                <input type="number" id="opt-limit" placeholder="all rows" min="1" />
+              </label>
+              <label>Min delay (sec)
+                <input type="number" id="opt-min-delay" placeholder="4" min="0" step="0.5" />
+              </label>
+              <label>Max delay (sec)
+                <input type="number" id="opt-max-delay" placeholder="9" min="0" step="0.5" />
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="opt-headed" />
+                Show the browser window while running
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="opt-fresh-session" />
+                Start a fresh session (ignore saved cookies)
+              </label>
+            </div>
+          </details>
+
+          <button class="btn btn-primary btn-large" id="start-btn" disabled>Start</button>
+        </section>
+
+        <!-- STEP 2: PROGRESS -->
+        <section class="card" id="progress-card" hidden>
+          <div class="progress-header">
+            <h2 id="progress-title">Processing your products&hellip;</h2>
+            <button class="btn btn-ghost" id="stop-btn">Stop</button>
+          </div>
+
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progress-bar-fill"></div>
+          </div>
+          <p class="progress-caption" id="progress-caption">0 of 0 processed</p>
+
+          <ul class="item-list" id="item-list"></ul>
+        </section>
+
+        <!-- STEP 3: DONE -->
+        <section class="card" id="done-card" hidden>
+          <div class="done-banner" id="done-banner">
+            <div class="done-icon" id="done-icon">&check;</div>
+            <div>
+              <h2 id="done-title">All done</h2>
+              <p id="done-subtitle"></p>
+            </div>
+          </div>
+
+          <div class="summary-row" id="summary-row"></div>
+
+          <div class="done-actions">
+            <a class="btn btn-primary btn-large" id="download-btn" href="#" download>Download enriched sheet</a>
+            <button class="btn btn-secondary" id="download-failures-btn" hidden>View failures log</button>
+            <button class="btn btn-ghost" id="restart-btn">Start another file</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- ==================== TAB: PUSH TO SHOPIFY ==================== -->
+      <div class="tab-panel" id="tab-direct" hidden>
+        <!-- STEP 1: UPLOAD -->
+        <section class="card" id="direct-upload-card">
+          <div class="dropzone" id="direct-dropzone" tabindex="0">
+            <input type="file" id="direct-file-input" accept=".xlsx" hidden />
+            <div class="dropzone-inner">
+              <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 16V4M12 4L7 9M12 4L17 9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M4 16V18C4 19.1 4.9 20 6 20H18C19.1 20 20 19.1 20 18V16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <p class="dropzone-text"><strong>Drop your product sheet here</strong> or click to browse</p>
+              <p class="dropzone-hint">Needs <strong>ASIN</strong> and <strong>LPN</strong> columns. Price, weight, condition and other fields are taken from your sheet as-is.</p>
+            </div>
+          </div>
+
+          <div class="selected-file" id="direct-selected-file" hidden>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="file-icon">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            <span id="direct-selected-file-name"></span>
+            <button class="link-btn" id="direct-clear-file-btn" type="button">Change file</button>
+          </div>
+
+          <p class="error-text" id="direct-upload-error" hidden></p>
+
+          <div class="notice-box">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="notice-icon">
+              <path d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            <p>Existing products are matched by <strong>LPN</strong> (written to Shopify's Barcode field) &mdash; a match updates that product, otherwise a new one is created.</p>
+          </div>
+
+          <details class="advanced">
+            <summary>Advanced options</summary>
+            <div class="advanced-grid">
+              <label>Amazon domain
+                <input type="text" id="direct-opt-domain" placeholder="amazon.co.uk" />
+              </label>
+              <label>ASIN column
+                <input type="text" id="direct-opt-asin-column" placeholder="auto-detect" />
+              </label>
+              <label>LPN column
+                <input type="text" id="direct-opt-lpn-column" placeholder="auto-detect" />
+              </label>
+              <label>Sheet name
+                <input type="text" id="direct-opt-sheet" placeholder="auto-detect" />
+              </label>
+              <label>Limit rows
+                <input type="number" id="direct-opt-limit" placeholder="all rows" min="1" />
+              </label>
+              <label>Min delay (sec)
+                <input type="number" id="direct-opt-min-delay" placeholder="4" min="0" step="0.5" />
+              </label>
+              <label>Max delay (sec)
+                <input type="number" id="direct-opt-max-delay" placeholder="9" min="0" step="0.5" />
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="direct-opt-headed" />
+                Show the browser window while running
+              </label>
+            </div>
+          </details>
+
+          <button class="btn btn-primary btn-large" id="direct-start-btn" disabled>List on Shopify</button>
+        </section>
+
+        <!-- STEP 2: PROGRESS -->
+        <section class="card" id="direct-progress-card" hidden>
+          <div class="progress-header">
+            <h2 id="direct-progress-title">Listing your products on Shopify&hellip;</h2>
+            <button class="btn btn-ghost" id="direct-stop-btn">Stop</button>
+          </div>
+
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="direct-progress-bar-fill"></div>
+          </div>
+          <p class="progress-caption" id="direct-progress-caption">0 of 0 processed</p>
+
+          <div class="live-stats-row" id="direct-live-stats"></div>
+
+          <ul class="item-list" id="direct-item-list"></ul>
+        </section>
+
+        <!-- STEP 3: DONE -->
+        <section class="card" id="direct-done-card" hidden>
+          <div class="done-banner" id="direct-done-banner">
+            <div class="done-icon" id="direct-done-icon">&check;</div>
+            <div>
+              <h2 id="direct-done-title">All done</h2>
+              <p id="direct-done-subtitle"></p>
+            </div>
+          </div>
+
+          <div class="summary-row" id="direct-summary-row"></div>
+
+          <div class="done-actions">
+            <a class="btn btn-primary btn-large" id="direct-view-store-btn" href="#" target="_blank" rel="noopener">View products in Shopify</a>
+            <button class="btn btn-secondary" id="direct-download-failures-btn" hidden>View failures log</button>
+            <button class="btn btn-ghost" id="direct-restart-btn">Start another file</button>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+  <script src="/app-direct.js"></script>
+  <script src="/tabs.js"></script>
+</body>
+</html>
