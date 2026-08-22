@@ -22,6 +22,9 @@ STORAGE_STATE_PATH = "amazon_enricher/.session_state.json"
 SHOPIFY_CREDENTIALS_PATH = "amazon_enricher/.shopify_credentials.json"
 SHOPIFY_API_VERSION = "2026-01"
 
+# Google service account key for the "Google Sheet Sync" mode.
+GOOGLE_CREDENTIALS_PATH = "amazon_enricher/.google_credentials.json"
+
 # (namespace, key) for each product metafield, as already defined on the store
 # (verified against the store's actual metafield definitions -- do not guess new ones).
 SHOPIFY_METAFIELDS = {
@@ -29,6 +32,7 @@ SHOPIFY_METAFIELDS = {
     "lpn": ("custom", "lpn"),
     "asin": ("custom", "asin"),
     "ean": ("custom", "ean"),
+    "upc": ("custom", "upc"),
     "category": ("custom", "category"),
     "condition": ("custom", "condition"),
     "rating_count": ("custom", "rating_count"),
@@ -39,6 +43,13 @@ SHOPIFY_METAFIELDS = {
     "specifications_dimensions": ("custom", "specifications_dimensions"),
     "specifications_weight": ("custom", "specifications_weight"),
     "specifications_special_feature": ("custom", "specifications_special_feature"),
+    "specifications_manufacturer": ("custom", "specifications_manufacturer"),
+    "specifications_country_of_origin": ("custom", "specifications_country_of_origin"),
+    "specifications_part_number": ("custom", "specifications_part_number"),
+    "specifications_model": ("custom", "specifications_model"),
+    "fc_sku": ("custom", "fc_sku"),
+    "pallet_id": ("custom", "pallet_id"),
+    "sub_category": ("custom", "sub_category"),
 }
 
 # Amazon specs-table key (lowercased) -> metafield slot in SHOPIFY_METAFIELDS.
@@ -50,8 +61,18 @@ SPECIFICATIONS_KEY_MAP = {
     "colour": "specifications_color",
     "color": "specifications_color",
     "material": "specifications_material",
+    "item weight": "specifications_weight",
+    "weight": "specifications_weight",
     "special feature": "specifications_special_feature",
     "special features": "specifications_special_feature",
+    "manufacturer": "specifications_manufacturer",
+    "country of origin": "specifications_country_of_origin",
+    "part number": "specifications_part_number",
+    "manufacturer part number": "specifications_part_number",
+    "item part number": "specifications_part_number",
+    "item model number": "specifications_model",
+    "model name": "specifications_model",
+    "model number": "specifications_model",
     "product dimensions": "specifications_dimensions",
     "item dimensions": "specifications_dimensions",
     "item dimensions lxwxh": "specifications_dimensions",

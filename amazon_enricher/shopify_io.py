@@ -58,6 +58,9 @@ def build_shopify_payload(row, asin_col, lpn_col, result):
     upc_col = _find_column(row.index, "upc")
     ean_col = _find_column(row.index, "ean")
     sku_col = _find_column(row.index, "sku")
+    fc_sku_col = _find_column(row.index, "fcsku", "fc sku", "fc")
+    pallet_col = _find_column(row.index, "pallet id", "palletid", "pallet")
+    subcategory_col = _find_column(row.index, "subcategory", "sub category", "sub-category")
 
     sheet_title = _clean(row.get(title_col)) if title_col else ""
     title = result.get("title") or sheet_title
@@ -90,12 +93,14 @@ def build_shopify_payload(row, asin_col, lpn_col, result):
         if slot and slot not in spec_fields:
             spec_fields[slot] = value
     spec_fields.setdefault("specifications_weight", weight_raw or None)
+    spec_fields.setdefault("specifications_country_of_origin", "China")
 
     payload = {
         "title": title,
         "body_html": body_html,
         "images": result.get("images") or [],
         "barcode": lpn,
+        "lpn": lpn,
         "price": _clean(row.get(price_col)) if price_col else "",
         "weight": weight,
         "sku": _clean(row.get(sku_col)) if sku_col else "",
@@ -103,6 +108,10 @@ def build_shopify_payload(row, asin_col, lpn_col, result):
         "rating_count": result.get("review_count_value"),
         "asin": asin,
         "ean": ean,
+        "upc": upc,
+        "fc_sku": _clean(row.get(fc_sku_col)) if fc_sku_col else "",
+        "pallet_id": _clean(row.get(pallet_col)) if pallet_col else "",
+        "sub_category": _clean(row.get(subcategory_col)) if subcategory_col else "",
         "category": result.get("category") or "",
     }
     payload.update(spec_fields)

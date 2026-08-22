@@ -1,5 +1,6 @@
 # Secrets -- never commit these
 amazon_enricher/.shopify_credentials.json
+amazon_enricher/.google_credentials.json
 amazon_enricher/.session_state.json
 shopify_oauth_helper/
 shopify_app_link/
@@ -8,6 +9,9 @@ shopify_app_v2/
 # Python
 __pycache__/
 *.pyc
+
+# Node (only used for one-off local tooling, not part of the app)
+node_modules/
 
 # Runtime / user data
 uploads/

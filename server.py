@@ -28,7 +28,9 @@ from flask import Flask, jsonify, request, send_file
 from playwright.sync_api import sync_playwright
 from werkzeug.utils import secure_filename
 
-from amazon_enricher import config, shopify_client
+import pandas as pd
+
+from amazon_enricher import config, sheets_client, shopify_client
 from amazon_enricher.matrixify_io import read_input, write_output
 from amazon_enricher.scraper import create_context, fetch_with_retries, save_state
 from amazon_enricher.shopify_io import build_shopify_payload, read_direct_input
@@ -46,6 +48,9 @@ JOBS_LOCK = threading.Lock()
 
 DIRECT_JOBS = {}
 DIRECT_JOBS_LOCK = threading.Lock()
+
+SHEET_JOBS = {}
+SHEET_JOBS_LOCK = threading.Lock()
 
 
 def _new_job(total, output_path, output_filename, original_filename):
@@ -465,6 +470,173 @@ def download_direct_failures(job_id):
     if not job or not job["failures_log_path"] or not os.path.isfile(job["failures_log_path"]):
         return jsonify({"error": "No failures log for that job."}), 404
     return send_file(job["failures_log_path"], as_attachment=True)
+
+
+def _new_sheet_job(total):
+    return {
+        "running": True,
+        "done": False,
+        "error": None,
+        "current": 0,
+        "total": total,
+        "items": [],
+        "stop_requested": False,
+        "shop_admin_url": None,
+    }
+
+
+@app.route("/api/sheet-jobs", methods=["POST"])
+def create_sheet_job():
+    payload = request.get_json(silent=True) or {}
+    sheet_url = (payload.get("sheet_url") or "").strip()
+    if not sheet_url:
+        return jsonify({"error": "Paste a Google Sheet link first."}), 400
+
+    worksheet_name = (payload.get("worksheet_name") or "").strip() or None
+
+    try:
+        worksheet = sheets_client.open_sheet(sheet_url, worksheet_name)
+        pending, status_col, asin_col_name, lpn_col_name = sheets_client.read_pending_rows(worksheet)
+    except sheets_client.SheetsError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    if not pending:
+        return jsonify({"error": "No rows found with Listing checked and Status still blank."}), 400
+
+    limit = payload.get("limit")
+    if limit:
+        try:
+            pending = pending[: int(limit)]
+        except ValueError:
+            pass
+
+    options = {
+        "domain": (payload.get("domain") or "").strip() or config.DEFAULT_DOMAIN,
+        "min_delay": float(payload.get("min_delay") or config.DEFAULT_MIN_DELAY),
+        "max_delay": float(payload.get("max_delay") or config.DEFAULT_MAX_DELAY),
+        "headed": bool(payload.get("headed")),
+    }
+
+    job_id = uuid.uuid4().hex
+    with SHEET_JOBS_LOCK:
+        SHEET_JOBS[job_id] = _new_sheet_job(len(pending))
+
+    thread = threading.Thread(
+        target=_run_sheet_job,
+        args=(job_id, worksheet, pending, status_col, asin_col_name, lpn_col_name, options),
+        daemon=True,
+    )
+    thread.start()
+
+    return jsonify({"job_id": job_id, "total": len(pending)})
+
+
+def _run_sheet_job(job_id, worksheet, pending, status_col, asin_col_name, lpn_col_name, options):
+    browser = None
+    context = None
+
+    try:
+        with sync_playwright() as p:
+            launch_args = ["--headless=old"] if not options["headed"] else []
+            browser = p.chromium.launch(headless=not options["headed"], args=launch_args)
+            context = create_context(browser, config.STORAGE_STATE_PATH)
+
+            total = len(pending)
+            for i, entry in enumerate(pending, start=1):
+                with SHEET_JOBS_LOCK:
+                    if SHEET_JOBS[job_id]["stop_requested"]:
+                        break
+
+                row = pd.Series(entry["data"])
+                asin = row.get(asin_col_name, "")
+                lpn = row.get(lpn_col_name, "")
+                sheet_row = entry["sheet_row"]
+
+                item = {"asin": asin, "lpn": lpn}
+                scrape_result = fetch_with_retries(context, asin, options["domain"])
+                if scrape_result["status"] != "ok":
+                    item.update(status=scrape_result["status"], notes=scrape_result.get("notes", ""))
+                    status_text = f"Failed: {scrape_result['status']}"
+                else:
+                    try:
+                        product_payload = build_shopify_payload(row, asin_col_name, lpn_col_name, scrape_result)
+                        push_result = shopify_client.push_product(product_payload)
+                        item.update(status=push_result["status"], title=product_payload["title"])
+                        status_text = "Listed" if push_result["status"] == "created" else "Updated"
+                    except Exception as exc:
+                        item.update(status="error", notes=str(exc)[:200])
+                        status_text = f"Failed: {str(exc)[:100]}"
+
+                try:
+                    sheets_client.write_status(worksheet, sheet_row, status_col, status_text)
+                except Exception:
+                    pass  # the Shopify side already succeeded/failed -- don't lose that over a sheet-write hiccup
+
+                with SHEET_JOBS_LOCK:
+                    SHEET_JOBS[job_id]["current"] = i
+                    SHEET_JOBS[job_id]["items"].append(item)
+
+                if i < total:
+                    time.sleep(random.uniform(options["min_delay"], options["max_delay"]))
+
+            _finish_sheet_job(job_id)
+
+            try:
+                save_state(context, config.STORAGE_STATE_PATH)
+            except Exception:
+                pass
+    except Exception as exc:
+        with SHEET_JOBS_LOCK:
+            SHEET_JOBS[job_id]["error"] = str(exc)
+        _finish_sheet_job(job_id)
+    finally:
+        try:
+            if context:
+                context.close()
+        except Exception:
+            pass
+        try:
+            if browser:
+                browser.close()
+        except Exception:
+            pass
+
+
+def _finish_sheet_job(job_id):
+    shop = shopify_client.get_shop_domain()
+    with SHEET_JOBS_LOCK:
+        SHEET_JOBS[job_id]["running"] = False
+        SHEET_JOBS[job_id]["done"] = True
+        SHEET_JOBS[job_id]["shop_admin_url"] = f"https://{shop}/admin/products"
+
+
+@app.route("/api/sheet-jobs/<job_id>")
+def sheet_job_status(job_id):
+    with SHEET_JOBS_LOCK:
+        job = SHEET_JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Unknown job"}), 404
+        return jsonify(
+            {
+                "running": job["running"],
+                "done": job["done"],
+                "error": job["error"],
+                "current": job["current"],
+                "total": job["total"],
+                "items": job["items"],
+                "shop_admin_url": job["shop_admin_url"],
+            }
+        )
+
+
+@app.route("/api/sheet-jobs/<job_id>/stop", methods=["POST"])
+def stop_sheet_job(job_id):
+    with SHEET_JOBS_LOCK:
+        job = SHEET_JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Unknown job"}), 404
+        job["stop_requested"] = True
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

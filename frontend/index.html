@@ -21,6 +21,7 @@
     <nav class="tabs" id="tabs">
       <button class="tab-btn active" data-tab="matrixify" type="button">Matrixify Export</button>
       <button class="tab-btn" data-tab="direct" type="button">Push to Shopify</button>
+      <button class="tab-btn" data-tab="sheet" type="button">Google Sheet Sync</button>
     </nav>
 
     <main class="content">
@@ -225,11 +226,92 @@
           </div>
         </section>
       </div>
+
+      <!-- ==================== TAB: GOOGLE SHEET SYNC ==================== -->
+      <div class="tab-panel" id="tab-sheet" hidden>
+        <!-- STEP 1: CONNECT -->
+        <section class="card" id="sheet-connect-card">
+          <label class="field-label" for="sheet-url">Google Sheet link</label>
+          <input type="text" id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/..." class="text-input" />
+
+          <p class="error-text" id="sheet-error" hidden></p>
+
+          <div class="notice-box">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="notice-icon">
+              <path d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            <p>Syncs every row where <strong>Listing</strong> is checked and <strong>Status</strong> is still blank. After a row is processed, its Status cell is filled in (Listed / Updated / Failed) so re-syncing never repeats it.</p>
+          </div>
+
+          <details class="advanced">
+            <summary>Advanced options</summary>
+            <div class="advanced-grid">
+              <label>Worksheet / tab name
+                <input type="text" id="sheet-opt-worksheet" placeholder="first sheet" />
+              </label>
+              <label>Amazon domain
+                <input type="text" id="sheet-opt-domain" placeholder="amazon.co.uk" />
+              </label>
+              <label>Limit rows
+                <input type="number" id="sheet-opt-limit" placeholder="all pending" min="1" />
+              </label>
+              <label>Min delay (sec)
+                <input type="number" id="sheet-opt-min-delay" placeholder="4" min="0" step="0.5" />
+              </label>
+              <label>Max delay (sec)
+                <input type="number" id="sheet-opt-max-delay" placeholder="9" min="0" step="0.5" />
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="sheet-opt-headed" />
+                Show the browser window while running
+              </label>
+            </div>
+          </details>
+
+          <button class="btn btn-primary btn-large" id="sheet-start-btn">Sync from Google Sheet</button>
+        </section>
+
+        <!-- STEP 2: PROGRESS -->
+        <section class="card" id="sheet-progress-card" hidden>
+          <div class="progress-header">
+            <h2 id="sheet-progress-title">Listing your products on Shopify&hellip;</h2>
+            <button class="btn btn-ghost" id="sheet-stop-btn">Stop</button>
+          </div>
+
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="sheet-progress-bar-fill"></div>
+          </div>
+          <p class="progress-caption" id="sheet-progress-caption">0 of 0 processed</p>
+
+          <div class="live-stats-row" id="sheet-live-stats"></div>
+
+          <ul class="item-list" id="sheet-item-list"></ul>
+        </section>
+
+        <!-- STEP 3: DONE -->
+        <section class="card" id="sheet-done-card" hidden>
+          <div class="done-banner" id="sheet-done-banner">
+            <div class="done-icon" id="sheet-done-icon">&check;</div>
+            <div>
+              <h2 id="sheet-done-title">All done</h2>
+              <p id="sheet-done-subtitle"></p>
+            </div>
+          </div>
+
+          <div class="summary-row" id="sheet-summary-row"></div>
+
+          <div class="done-actions">
+            <a class="btn btn-primary btn-large" id="sheet-view-store-btn" href="#" target="_blank" rel="noopener">View products in Shopify</a>
+            <button class="btn btn-ghost" id="sheet-restart-btn">Sync again</button>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
 
   <script src="/app.js"></script>
   <script src="/app-direct.js"></script>
+  <script src="/app-sheet.js"></script>
   <script src="/tabs.js"></script>
 </body>
 </html>

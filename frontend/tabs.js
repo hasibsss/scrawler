@@ -3,6 +3,7 @@
   const panels = {
     matrixify: document.getElementById("tab-matrixify"),
     direct: document.getElementById("tab-direct"),
+    sheet: document.getElementById("tab-sheet"),
   };
 
   buttons.forEach((btn) => {
