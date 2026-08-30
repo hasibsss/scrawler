@@ -7,12 +7,16 @@ metafields, and (create only) gallery images.
 """
 
 import json
+import re
+import time
 
 import requests
 
 from . import config
 
 GRAPHQL_TIMEOUT = 30
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 3
 
 
 class ShopifyError(Exception):
@@ -30,20 +34,38 @@ def get_shop_domain():
     return shop
 
 
+def _is_transient(exc):
+    """Shopify-side hiccups (server errors, brief outages) worth retrying,
+    as opposed to real problems with our request that retrying won't fix."""
+    if isinstance(exc, requests.exceptions.HTTPError):
+        return exc.response is not None and exc.response.status_code in (500, 502, 503, 504)
+    if isinstance(exc, ShopifyError):
+        return "internal error" in str(exc).lower()
+    return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+
+
 def _graphql(query, variables=None):
     shop, token = _load_credentials()
     url = f"https://{shop}/admin/api/{config.SHOPIFY_API_VERSION}/graphql.json"
-    resp = requests.post(
-        url,
-        json={"query": query, "variables": variables or {}},
-        headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
-        timeout=GRAPHQL_TIMEOUT,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if "errors" in data:
-        raise ShopifyError(str(data["errors"]))
-    return data["data"]
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.post(
+                url,
+                json={"query": query, "variables": variables or {}},
+                headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"},
+                timeout=GRAPHQL_TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if "errors" in data:
+                raise ShopifyError(str(data["errors"]))
+            return data["data"]
+        except (requests.exceptions.RequestException, ShopifyError) as exc:
+            if attempt < MAX_RETRIES and _is_transient(exc):
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            raise
 
 
 def _check_user_errors(payload, mutation_name):
@@ -149,7 +171,11 @@ def _update_variant(product_id, variant_id, payload):
 def _metafield_value(slot, value):
     if slot == "rating_count":
         return "number_integer", str(int(value))
-    return "single_line_text_field", str(value)
+    # single_line_text_field rejects any value containing a newline -- scraped
+    # specs and sheet cells occasionally carry one (e.g. wrapped sheet cells,
+    # or an Amazon spec value built from multiple lines), so collapse them.
+    text = re.sub(r"\s*\n\s*", " ", str(value)).strip()
+    return "single_line_text_field", text
 
 
 def _set_metafields(product_id, payload):
