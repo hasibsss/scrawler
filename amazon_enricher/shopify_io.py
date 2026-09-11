@@ -7,10 +7,33 @@ and, when present, are used as-is rather than overwritten by the scrape --
 see matrixify_io.py's docstring-level convention, which this mirrors.
 """
 
+import re
+
 import pandas as pd
 
 from .matrixify_io import _pick_sheet, ASIN_RE
 from .scraper import _build_body_html
+
+SEO_TITLE_MAX = 60
+SEO_DESCRIPTION_MAX = 155
+TRUE_VALUES = {"true", "yes", "1"}
+
+
+def _truncate_at_word(text, max_len):
+    """Cuts at the last whole word inside max_len rather than mid-word, so it
+    never reads as a raw chopped-off string."""
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if len(text) <= max_len:
+        return text
+    return text[:max_len].rsplit(" ", 1)[0].rstrip(".,;:- ")
+
+
+def _build_seo_fields(title, bullets):
+    seo_title = _truncate_at_word(title, SEO_TITLE_MAX)
+    description_source = " ".join(b.strip().rstrip(".") + "." for b in (bullets or []) if b.strip())
+    seo_description = _truncate_at_word(description_source, SEO_DESCRIPTION_MAX)
+    return seo_title, seo_description
+
 
 def _find_column(columns, *names):
     for col in columns:
@@ -61,6 +84,7 @@ def build_shopify_payload(row, asin_col, lpn_col, result):
     fc_sku_col = _find_column(row.index, "fcsku", "fc sku", "fc")
     pallet_col = _find_column(row.index, "pallet id", "palletid", "pallet")
     subcategory_col = _find_column(row.index, "subcategory", "sub category", "sub-category")
+    seo_col = _find_column(row.index, "seo")
 
     sheet_title = _clean(row.get(title_col)) if title_col else ""
     title = result.get("title") or sheet_title
@@ -115,4 +139,11 @@ def build_shopify_payload(row, asin_col, lpn_col, result):
         "category": result.get("category") or "",
     }
     payload.update(spec_fields)
+
+    seo_requested = seo_col and _clean(row.get(seo_col)).lower() in TRUE_VALUES
+    if seo_requested:
+        payload["seo_title"], payload["seo_description"] = _build_seo_fields(
+            title, result.get("bullets")
+        )
+
     return payload

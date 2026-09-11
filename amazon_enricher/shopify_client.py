@@ -93,6 +93,15 @@ def find_variant_by_barcode(barcode):
     return node["product"]["id"], node["id"]
 
 
+def _seo_input(payload):
+    seo = {}
+    if payload.get("seo_title"):
+        seo["title"] = payload["seo_title"]
+    if payload.get("seo_description"):
+        seo["description"] = payload["seo_description"]
+    return seo or None
+
+
 def _create_product(payload):
     query = """
     mutation($input: ProductInput!) {
@@ -102,13 +111,15 @@ def _create_product(payload):
       }
     }
     """
-    variables = {
-        "input": {
-            "title": payload["title"],
-            "descriptionHtml": payload["body_html"],
-            "status": "DRAFT",
-        }
+    product_input = {
+        "title": payload["title"],
+        "descriptionHtml": payload["body_html"],
+        "status": "DRAFT",
     }
+    seo = _seo_input(payload)
+    if seo:
+        product_input["seo"] = seo
+    variables = {"input": product_input}
     data = _graphql(query, variables)
     _check_user_errors(data, "productCreate")
     product = data["productCreate"]["product"]
@@ -125,14 +136,15 @@ def _update_product(product_id, payload):
       }
     }
     """
-    variables = {
-        "input": {
-            "id": product_id,
-            "title": payload["title"],
-            "descriptionHtml": payload["body_html"],
-        }
+    product_input = {
+        "id": product_id,
+        "title": payload["title"],
+        "descriptionHtml": payload["body_html"],
     }
-    data = _graphql(query, variables)
+    seo = _seo_input(payload)
+    if seo:
+        product_input["seo"] = seo
+    data = _graphql(query, {"input": product_input})
     _check_user_errors(data, "productUpdate")
 
 
