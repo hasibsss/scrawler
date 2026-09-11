@@ -240,7 +240,7 @@
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="notice-icon">
               <path d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.29 2.25h17.78A1.5 1.5 0 0 0 22.18 18L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
             </svg>
-            <p>Syncs every row where <strong>Listing</strong> is checked and <strong>Status</strong> is still blank. After a row is processed, its Status cell is filled in (Listed / Updated / Failed) so re-syncing never repeats it.</p>
+            <p>Syncs every row where <strong>Listing</strong> is checked and <strong>Status</strong> is still blank. A row with just <strong>SEO</strong> checked (and <strong>SEO Status</strong> blank) is also picked up on its own, to backfill an SEO title/description onto an already-listed product. Each row's Status / SEO Status cell is filled in after processing so re-syncing never repeats it.</p>
           </div>
 
           <details class="advanced">

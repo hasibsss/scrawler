@@ -496,12 +496,16 @@ def create_sheet_job():
 
     try:
         worksheet = sheets_client.open_sheet(sheet_url, worksheet_name)
-        pending, status_col, asin_col_name, lpn_col_name = sheets_client.read_pending_rows(worksheet)
+        pending, status_col, seo_status_col, asin_col_name, lpn_col_name = sheets_client.read_pending_rows(
+            worksheet
+        )
     except sheets_client.SheetsError as exc:
         return jsonify({"error": str(exc)}), 400
 
     if not pending:
-        return jsonify({"error": "No rows found with Listing checked and Status still blank."}), 400
+        return jsonify(
+            {"error": "No rows found with Listing checked (or SEO checked) and the matching status still blank."}
+        ), 400
 
     limit = payload.get("limit")
     if limit:
@@ -523,7 +527,7 @@ def create_sheet_job():
 
     thread = threading.Thread(
         target=_run_sheet_job,
-        args=(job_id, worksheet, pending, status_col, asin_col_name, lpn_col_name, options),
+        args=(job_id, worksheet, pending, status_col, seo_status_col, asin_col_name, lpn_col_name, options),
         daemon=True,
     )
     thread.start()
@@ -531,7 +535,7 @@ def create_sheet_job():
     return jsonify({"job_id": job_id, "total": len(pending)})
 
 
-def _run_sheet_job(job_id, worksheet, pending, status_col, asin_col_name, lpn_col_name, options):
+def _run_sheet_job(job_id, worksheet, pending, status_col, seo_status_col, asin_col_name, lpn_col_name, options):
     browser = None
     context = None
 
@@ -569,6 +573,9 @@ def _run_sheet_job(job_id, worksheet, pending, status_col, asin_col_name, lpn_co
 
                 try:
                     sheets_client.write_status(worksheet, sheet_row, status_col, status_text)
+                    if entry["needs_seo"] and seo_status_col:
+                        seo_text = "Done" if status_text in ("Listed", "Updated") else status_text
+                        sheets_client.write_status(worksheet, sheet_row, seo_status_col, seo_text)
                 except Exception:
                     pass  # the Shopify side already succeeded/failed -- don't lose that over a sheet-write hiccup
 
