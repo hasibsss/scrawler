@@ -668,7 +668,12 @@ def _product_json(product):
 
 
 @app.route("/inventory")
-def inventory_page():
+@app.route("/inventory/<path:subpath>")
+def inventory_page(subpath=None):
+    # Client-side router (see inventory.js) -- every /inventory/... URL serves
+    # the same page and JS decides what to render, so a direct link or a
+    # refresh on e.g. /inventory/products/5/edit lands on the right view
+    # instead of a 404.
     return app.send_static_file("inventory.html")
 
 

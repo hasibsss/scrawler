@@ -1,100 +1,46 @@
 (() => {
-  const listView = document.getElementById("list-view");
-  const detailView = document.getElementById("detail-view");
-  const newBtn = document.getElementById("new-btn");
-  const backBtn = document.getElementById("back-btn");
-
-  const searchInput = document.getElementById("search-input");
-  const statusFilter = document.getElementById("status-filter");
-  const productList = document.getElementById("product-list");
-  const emptyText = document.getElementById("empty-text");
+  const mainContent = document.getElementById("main-content");
+  const sidebar = document.getElementById("sidebar");
+  const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+  const mobileMenuBtn = document.getElementById("mobile-menu-btn");
   const syncSoldBtn = document.getElementById("sync-sold-btn");
   const syncNote = document.getElementById("sync-note");
 
-  const fields = {
-    lpn: document.getElementById("f-lpn"),
-    sku: document.getElementById("f-sku"),
-    asin: document.getElementById("f-asin"),
-    condition: document.getElementById("f-condition"),
-    upc: document.getElementById("f-upc"),
-    ean: document.getElementById("f-ean"),
-    price: document.getElementById("f-price"),
-    weight: document.getElementById("f-weight"),
-    category: document.getElementById("f-category"),
-    title: document.getElementById("f-title"),
-    description: document.getElementById("f-description"),
-  };
+  // -- tiny router ----------------------------------------------------------
 
-  const photoGrid = document.getElementById("photo-grid");
-  const photoInput = document.getElementById("photo-input");
-  const formError = document.getElementById("form-error");
-  const statusLine = document.getElementById("status-line");
-  const saveBtn = document.getElementById("save-btn");
-  const listBtn = document.getElementById("list-btn");
-
-  let current = null; // null = new/unsaved, else the loaded product object
-  let searchTimer = null;
-
-  // -- list view -----------------------------------------------------------
-
-  async function loadList() {
-    const q = searchInput.value.trim();
-    const status = statusFilter.value;
-    const params = new URLSearchParams();
-    if (q) params.set("q", q);
-    if (status) params.set("status", status);
-    let data;
-    try {
-      const res = await fetch(`/api/inventory/products?${params}`);
-      data = await res.json();
-    } catch (err) {
-      return;
-    }
-    renderList(data.products || []);
+  function navigate(path, { replace = false } = {}) {
+    if (replace) history.replaceState(null, "", path);
+    else history.pushState(null, "", path);
+    render();
   }
 
-  function renderList(products) {
-    productList.innerHTML = "";
-    emptyText.hidden = products.length > 0;
-    for (const p of products) {
-      const li = document.createElement("li");
-      li.className = "product-card";
-      li.addEventListener("click", () => openDetail(p));
-
-      const thumbSrc = p.images && p.images[0] ? p.images[0].url : "";
-      const thumb = document.createElement("img");
-      thumb.className = "product-thumb";
-      thumb.src = thumbSrc;
-      thumb.style.visibility = thumbSrc ? "visible" : "hidden";
-
-      const info = document.createElement("div");
-      info.className = "product-info";
-      const title = document.createElement("div");
-      title.className = "product-title";
-      title.textContent = p.title || p.lpn || "(untitled)";
-      const meta = document.createElement("div");
-      meta.className = "product-meta";
-      meta.textContent = [p.lpn, p.sku, p.asin].filter(Boolean).join(" · ");
-      info.append(title, meta);
-
-      const badge = document.createElement("span");
-      badge.className = `badge badge-${p.status}`;
-      badge.textContent = p.status;
-
-      li.append(thumb, info, badge);
-      productList.appendChild(li);
-    }
-  }
-
-  searchInput.addEventListener("input", () => {
-    clearInterval(searchTimer);
-    searchTimer = setTimeout(loadList, 300);
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest("[data-link]");
+    if (!link) return;
+    e.preventDefault();
+    closeSidebar();
+    navigate(link.getAttribute("href"));
   });
-  statusFilter.addEventListener("change", loadList);
+  window.addEventListener("popstate", render);
+
+  // -- mobile sidebar ---------------------------------------------------------
+
+  function openSidebar() {
+    sidebar.classList.add("open");
+    sidebarBackdrop.hidden = false;
+  }
+  function closeSidebar() {
+    sidebar.classList.remove("open");
+    sidebarBackdrop.hidden = true;
+  }
+  mobileMenuBtn.addEventListener("click", openSidebar);
+  sidebarBackdrop.addEventListener("click", closeSidebar);
+
+  // -- sidebar sync button ----------------------------------------------------
 
   syncSoldBtn.addEventListener("click", async () => {
     syncSoldBtn.disabled = true;
-    syncSoldBtn.textContent = "Checking Shopify...";
+    syncSoldBtn.textContent = "Checking...";
     syncNote.textContent = "";
     try {
       const res = await fetch("/api/inventory/sync-sold", { method: "POST" });
@@ -102,7 +48,9 @@
       syncNote.textContent = res.ok
         ? `${result.newly_sold} item${result.newly_sold === 1 ? "" : "s"} marked sold.`
         : result.error || "Sync failed.";
-      if (res.ok) loadList();
+      if (res.ok && location.pathname.includes("/products") && !location.pathname.match(/\/\d+/)) {
+        render();
+      }
     } catch (err) {
       syncNote.textContent = "Couldn't reach the server.";
     } finally {
@@ -111,182 +59,386 @@
     }
   });
 
-  // -- detail/edit view -----------------------------------------------------
-
-  function showList() {
-    detailView.hidden = true;
-    listView.hidden = false;
-    loadList();
+  function setActiveNav(status) {
+    document.querySelectorAll(".nav-link").forEach((a) => {
+      a.classList.toggle("active", a.dataset.status === (status || ""));
+    });
   }
 
-  function showDetail() {
-    listView.hidden = true;
-    detailView.hidden = false;
+  function escapeHtml(s) {
+    const div = document.createElement("div");
+    div.textContent = s == null ? "" : String(s);
+    return div.innerHTML;
   }
 
-  function clearForm() {
-    for (const el of Object.values(fields)) el.value = "";
-    photoGrid.innerHTML = "";
-    formError.hidden = true;
-    statusLine.textContent = "";
+  // -- api helpers --------------------------------------------------------
+
+  async function apiGet(url) {
+    const res = await fetch(url);
+    return { ok: res.ok, data: await res.json() };
+  }
+  async function apiJson(url, method, body) {
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
+  // ====================================================================
+  // LIST PAGE
+  // ====================================================================
+
+  async function renderListPage(status) {
+    setActiveNav(status);
+    mainContent.innerHTML = `
+      <div class="page-header"><h1>Products</h1></div>
+      <div class="search-row"><input type="search" id="search-input" placeholder="Search by SKU, LPN, ASIN or title..." /></div>
+      <div id="list-body"></div>
+    `;
+    const searchInput = document.getElementById("search-input");
+    const listBody = document.getElementById("list-body");
+
+    let timer = null;
+    const load = async () => {
+      const params = new URLSearchParams();
+      if (searchInput.value.trim()) params.set("q", searchInput.value.trim());
+      if (status) params.set("status", status);
+      const { data } = await apiGet(`/api/inventory/products?${params}`);
+      renderProductTable(listBody, data.products || []);
+    };
+    searchInput.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(load, 300);
+    });
+    load();
+  }
+
+  function renderProductTable(container, products) {
+    if (!products.length) {
+      container.innerHTML = `<p class="empty-text">No items found.</p>`;
+      return;
+    }
+    const rows = products
+      .map((p) => {
+        const thumb = p.images && p.images[0] ? p.images[0].url : "";
+        return `
+        <tr class="product-row" data-id="${p.id}">
+          <td>${thumb ? `<img class="product-thumb" src="${thumb}" />` : `<div class="product-thumb"></div>`}</td>
+          <td>
+            <div class="product-title-cell">${escapeHtml(p.title || p.lpn || "(untitled)")}</div>
+            <div class="product-meta-cell">${escapeHtml([p.lpn, p.sku, p.asin].filter(Boolean).join(" · "))}</div>
+          </td>
+          <td><span class="badge badge-${p.status}">${p.status}</span></td>
+          <td class="product-meta-cell">${p.price ? "£" + escapeHtml(p.price) : ""}</td>
+        </tr>`;
+      })
+      .join("");
+    container.innerHTML = `
+      <table class="product-table">
+        <thead><tr><th></th><th>Product</th><th>Status</th><th>Price</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    container.querySelectorAll(".product-row").forEach((row) => {
+      row.addEventListener("click", () => navigate(`/inventory/products/${row.dataset.id}`));
+    });
+  }
+
+  // ====================================================================
+  // VIEW PAGE
+  // ====================================================================
+
+  async function renderViewPage(id) {
+    setActiveNav(null);
+    mainContent.innerHTML = `<p class="empty-text">Loading...</p>`;
+    const { ok, data: product } = await apiGet(`/api/inventory/products/${id}`);
+    if (!ok) {
+      mainContent.innerHTML = `<p class="empty-text">Item not found.</p>`;
+      return;
+    }
+
+    const photos = (product.images || [])
+      .map((img) => `<img src="${img.url}" />`)
+      .join("");
+
+    const detail = (label, value) => `
+      <div class="detail-item">
+        <div class="detail-label">${label}</div>
+        <div class="detail-value">${value ? escapeHtml(value) : "—"}</div>
+      </div>`;
+
+    mainContent.innerHTML = `
+      <button class="btn btn-ghost" id="back-btn" style="margin-bottom:14px;">&larr; Back to products</button>
+      <div class="view-card">
+        <div class="view-top">
+          <div>
+            <h1 class="view-title">${escapeHtml(product.title || product.lpn || "(untitled)")}</h1>
+            <span class="badge badge-${product.status}">${product.status}</span>
+          </div>
+          <div class="view-actions">
+            <a class="btn btn-secondary" href="/inventory/products/${id}/edit" data-link>Edit</a>
+            <button class="btn btn-primary" id="list-btn">List on Shopify</button>
+          </div>
+        </div>
+
+        ${photos ? `<div class="photo-gallery">${photos}</div>` : ""}
+
+        <div class="detail-grid">
+          ${detail("LPN", product.lpn)}
+          ${detail("SKU", product.sku)}
+          ${detail("ASIN", product.asin)}
+          ${detail("Condition", product.condition)}
+          ${detail("UPC", product.upc)}
+          ${detail("EAN", product.ean)}
+          ${detail("Price", product.price ? "£" + product.price : "")}
+          ${detail("Weight (kg)", product.weight)}
+          ${detail("Category", product.category)}
+          <div class="detail-item detail-full">
+            <div class="detail-label">Description</div>
+            <div class="detail-value detail-description">${product.description ? escapeHtml(product.description) : "—"}</div>
+          </div>
+        </div>
+
+        <p class="error-text" id="view-error" hidden></p>
+        <p class="status-line" id="view-status"></p>
+      </div>
+    `;
+
+    document.getElementById("back-btn").addEventListener("click", () => navigate("/inventory/products"));
+
+    const listBtn = document.getElementById("list-btn");
+    const viewError = document.getElementById("view-error");
+    const viewStatus = document.getElementById("view-status");
+
+    if (!product.asin) {
+      listBtn.disabled = true;
+      listBtn.title = "Add an ASIN first (via Edit)";
+    }
+    if (product.shopify_product_id) {
+      listBtn.textContent = "Re-list / update on Shopify";
+    }
+
+    listBtn.addEventListener("click", async () => {
+      viewError.hidden = true;
+      listBtn.disabled = true;
+      listBtn.textContent = "Listing on Shopify...";
+      viewStatus.textContent = "Scraping Amazon and pushing to Shopify -- this can take 10-20 seconds...";
+      try {
+        const res = await fetch(`/api/inventory/products/${id}/list`, { method: "POST" });
+        const result = await res.json();
+        if (!res.ok) {
+          viewError.textContent = result.error || "Listing failed.";
+          viewError.hidden = false;
+          return;
+        }
+        viewStatus.innerHTML = `Done (${result.status}). <a href="${result.shop_admin_url}" target="_blank" rel="noopener">View in Shopify</a>`;
+      } catch (err) {
+        viewError.textContent = "Couldn't reach the server.";
+        viewError.hidden = false;
+      } finally {
+        listBtn.disabled = false;
+        listBtn.textContent = "Re-list / update on Shopify";
+      }
+    });
+  }
+
+  // ====================================================================
+  // FORM PAGE (new / edit)
+  // ====================================================================
+
+  async function renderFormPage(id) {
+    setActiveNav(null);
+    const isNew = !id;
+    let product = {};
+    if (!isNew) {
+      mainContent.innerHTML = `<p class="empty-text">Loading...</p>`;
+      const { ok, data } = await apiGet(`/api/inventory/products/${id}`);
+      if (!ok) {
+        mainContent.innerHTML = `<p class="empty-text">Item not found.</p>`;
+        return;
+      }
+      product = data;
+    }
+
+    mainContent.innerHTML = `
+      <button class="btn btn-ghost" id="back-btn" style="margin-bottom:14px;">&larr; ${isNew ? "Cancel" : "Back to item"}</button>
+      <div class="form-card">
+        <div class="field-row">
+          <label class="field">LPN *<input type="text" id="f-lpn" /></label>
+          <label class="field">SKU<input type="text" id="f-sku" /></label>
+        </div>
+        <div class="field-row">
+          <label class="field">ASIN<input type="text" id="f-asin" /></label>
+          <label class="field">Condition<input type="text" id="f-condition" /></label>
+        </div>
+        <div class="field-row">
+          <label class="field">UPC<input type="text" id="f-upc" /></label>
+          <label class="field">EAN<input type="text" id="f-ean" /></label>
+        </div>
+        <div class="field-row">
+          <label class="field">Price<input type="text" id="f-price" inputmode="decimal" /></label>
+          <label class="field">Weight (kg)<input type="text" id="f-weight" inputmode="decimal" /></label>
+        </div>
+        <label class="field full">Category<input type="text" id="f-category" /></label>
+        <label class="field full">Title<input type="text" id="f-title" placeholder="Leave blank to use Amazon's title" /></label>
+        <label class="field full">Description<textarea id="f-description" rows="4" placeholder="Leave blank to use Amazon's description"></textarea></label>
+
+        <div class="photos-block">
+          <p class="block-label">Photos</p>
+          <div class="photo-grid" id="photo-grid"></div>
+          ${
+            isNew
+              ? `<p class="status-line">Save the item first, then you can add photos.</p>`
+              : `<label class="btn btn-secondary photo-add-btn">+ Add photo<input type="file" id="photo-input" accept="image/*" capture="environment" multiple hidden /></label>`
+          }
+        </div>
+
+        <p class="error-text" id="form-error" hidden></p>
+        <p class="status-line" id="status-line"></p>
+
+        <div class="form-actions">
+          <button class="btn btn-primary" id="save-btn">Save</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById("back-btn").addEventListener("click", () => {
+      navigate(isNew ? "/inventory/products" : `/inventory/products/${id}`);
+    });
+
+    fillForm(product);
+    if (!isNew) wirePhotoUpload(id);
+
+    document.getElementById("save-btn").addEventListener("click", () => saveForm(isNew ? null : id));
   }
 
   function fillForm(product) {
-    fields.lpn.value = product.lpn || "";
-    fields.sku.value = product.sku || "";
-    fields.asin.value = product.asin || "";
-    fields.condition.value = product.condition || "";
-    fields.upc.value = product.upc || "";
-    fields.ean.value = product.ean || "";
-    fields.price.value = product.price || "";
-    fields.weight.value = product.weight || "";
-    fields.category.value = product.category || "";
-    fields.title.value = product.title || "";
-    fields.description.value = product.description || "";
-    renderPhotos(product.images || []);
-    statusLine.textContent = `Status: ${product.status}${product.shopify_product_id ? " · listed on Shopify" : ""}`;
+    const set = (elId, val) => (document.getElementById(elId).value = val || "");
+    set("f-lpn", product.lpn);
+    set("f-sku", product.sku);
+    set("f-asin", product.asin);
+    set("f-condition", product.condition);
+    set("f-upc", product.upc);
+    set("f-ean", product.ean);
+    set("f-price", product.price);
+    set("f-weight", product.weight);
+    set("f-category", product.category);
+    set("f-title", product.title);
+    set("f-description", product.description);
+    renderPhotoGrid(product.images || [], product.id);
+    const statusLine = document.getElementById("status-line");
+    if (product.id) statusLine.textContent = `Status: ${product.status}`;
   }
 
-  function renderPhotos(images) {
-    photoGrid.innerHTML = "";
-    for (const img of images) {
-      const div = document.createElement("div");
-      div.className = "photo-thumb";
-      const el = document.createElement("img");
-      el.src = img.url;
-      const removeBtn = document.createElement("button");
-      removeBtn.className = "photo-remove";
-      removeBtn.textContent = "×";
-      removeBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        await fetch(`/api/inventory/images/${img.id}`, { method: "DELETE" });
-        current = await (await fetch(`/api/inventory/products/${current.id}`)).json();
-        renderPhotos(current.images || []);
+  function renderPhotoGrid(images, productId) {
+    const grid = document.getElementById("photo-grid");
+    grid.innerHTML = images
+      .map(
+        (img) => `
+      <div class="photo-thumb" data-image-id="${img.id}">
+        <img src="${img.url}" />
+        <button type="button" class="photo-remove">&times;</button>
+      </div>`
+      )
+      .join("");
+    grid.querySelectorAll(".photo-remove").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        const thumb = e.target.closest(".photo-thumb");
+        await fetch(`/api/inventory/images/${thumb.dataset.imageId}`, { method: "DELETE" });
+        const { data } = await apiGet(`/api/inventory/products/${productId}`);
+        renderPhotoGrid(data.images || [], productId);
       });
-      div.append(el, removeBtn);
-      photoGrid.appendChild(div);
-    }
+    });
   }
 
-  function openDetail(product) {
-    current = product;
-    clearForm();
-    fillForm(product);
-    showDetail();
+  function wirePhotoUpload(id) {
+    const input = document.getElementById("photo-input");
+    if (!input) return;
+    input.addEventListener("change", async () => {
+      for (const file of input.files) {
+        const form = new FormData();
+        form.append("file", file);
+        try {
+          await fetch(`/api/inventory/products/${id}/images`, { method: "POST", body: form });
+        } catch (err) {
+          /* best-effort per file */
+        }
+      }
+      input.value = "";
+      const { data } = await apiGet(`/api/inventory/products/${id}`);
+      renderPhotoGrid(data.images || [], id);
+    });
   }
-
-  newBtn.addEventListener("click", () => {
-    current = null;
-    clearForm();
-    statusLine.textContent = "Not saved yet -- fill in at least an LPN and press Save.";
-    showDetail();
-  });
-
-  backBtn.addEventListener("click", showList);
 
   function collectForm() {
+    const get = (elId) => document.getElementById(elId).value.trim();
     return {
-      lpn: fields.lpn.value.trim(),
-      sku: fields.sku.value.trim(),
-      asin: fields.asin.value.trim().toUpperCase(),
-      condition: fields.condition.value.trim(),
-      upc: fields.upc.value.trim(),
-      ean: fields.ean.value.trim(),
-      price: fields.price.value.trim(),
-      weight: fields.weight.value.trim(),
-      category: fields.category.value.trim(),
-      title: fields.title.value.trim(),
-      description: fields.description.value.trim(),
+      lpn: get("f-lpn"),
+      sku: get("f-sku"),
+      asin: get("f-asin").toUpperCase(),
+      condition: get("f-condition"),
+      upc: get("f-upc"),
+      ean: get("f-ean"),
+      price: get("f-price"),
+      weight: get("f-weight"),
+      category: get("f-category"),
+      title: get("f-title"),
+      description: get("f-description"),
     };
   }
 
-  function showError(message) {
-    formError.textContent = message;
-    formError.hidden = false;
-  }
-
-  saveBtn.addEventListener("click", async () => {
-    formError.hidden = true;
+  async function saveForm(id) {
+    const formError = document.getElementById("form-error");
+    const saveBtn = document.getElementById("save-btn");
     const data = collectForm();
+    formError.hidden = true;
     if (!data.lpn) {
-      showError("LPN is required.");
+      formError.textContent = "LPN is required.";
+      formError.hidden = false;
       return;
     }
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
     try {
-      const isNew = !current || !current.id;
-      const url = isNew ? "/api/inventory/products" : `/api/inventory/products/${current.id}`;
-      const res = await fetch(url, {
-        method: isNew ? "POST" : "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      const result = await res.json();
-      if (!res.ok) {
-        showError(result.error || "Could not save.");
+      const { ok, data: result } = id
+        ? await apiJson(`/api/inventory/products/${id}`, "PUT", data)
+        : await apiJson("/api/inventory/products", "POST", data);
+      if (!ok) {
+        formError.textContent = result.error || "Could not save.";
+        formError.hidden = false;
         return;
       }
-      current = result;
-      fillForm(current);
-      statusLine.textContent = `Saved. Status: ${current.status}`;
+      navigate(id ? `/inventory/products/${id}` : `/inventory/products/${result.id}/edit`, { replace: !id });
     } catch (err) {
-      showError("Couldn't reach the server.");
+      formError.textContent = "Couldn't reach the server.";
+      formError.hidden = false;
     } finally {
       saveBtn.disabled = false;
       saveBtn.textContent = "Save";
     }
-  });
+  }
 
-  photoInput.addEventListener("change", async () => {
-    if (!current || !current.id) {
-      showError("Save the item first, then add photos.");
-      photoInput.value = "";
-      return;
-    }
-    for (const file of photoInput.files) {
-      const form = new FormData();
-      form.append("file", file);
-      try {
-        await fetch(`/api/inventory/products/${current.id}/images`, { method: "POST", body: form });
-      } catch (err) {
-        showError("A photo failed to upload.");
-      }
-    }
-    photoInput.value = "";
-    current = await (await fetch(`/api/inventory/products/${current.id}`)).json();
-    renderPhotos(current.images || []);
-  });
+  // ====================================================================
+  // ROUTER
+  // ====================================================================
 
-  listBtn.addEventListener("click", async () => {
-    if (!current || !current.id) {
-      showError("Save the item first.");
-      return;
-    }
-    if (!current.asin) {
-      showError("Add an ASIN before listing on Shopify.");
-      return;
-    }
-    formError.hidden = true;
-    listBtn.disabled = true;
-    listBtn.textContent = "Listing on Shopify...";
-    statusLine.textContent = "Scraping Amazon and pushing to Shopify -- this can take 10-20 seconds...";
-    try {
-      const res = await fetch(`/api/inventory/products/${current.id}/list`, { method: "POST" });
-      const result = await res.json();
-      if (!res.ok) {
-        showError(result.error || "Listing failed.");
-        return;
-      }
-      current = await (await fetch(`/api/inventory/products/${current.id}`)).json();
-      statusLine.innerHTML = `Done (${result.status}). <a href="${result.shop_admin_url}" target="_blank" rel="noopener">View in Shopify</a>`;
-    } catch (err) {
-      showError("Couldn't reach the server.");
-    } finally {
-      listBtn.disabled = false;
-      listBtn.textContent = "List on Shopify";
-    }
-  });
+  function render() {
+    closeSidebar();
+    const path = location.pathname;
+    const params = new URLSearchParams(location.search);
 
-  loadList();
+    let m;
+    if ((m = path.match(/^\/inventory\/products\/new\/?$/))) {
+      renderFormPage(null);
+    } else if ((m = path.match(/^\/inventory\/products\/(\d+)\/edit\/?$/))) {
+      renderFormPage(m[1]);
+    } else if ((m = path.match(/^\/inventory\/products\/(\d+)\/?$/))) {
+      renderViewPage(m[1]);
+    } else {
+      renderListPage(params.get("status") || "");
+    }
+  }
+
+  render();
 })();
