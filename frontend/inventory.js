@@ -123,26 +123,72 @@
     const rows = products
       .map((p) => {
         const thumb = p.images && p.images[0] ? p.images[0].url : "";
+        const shopifyUrl = shopifyProductUrl(p);
         return `
         <tr class="product-row" data-id="${p.id}">
           <td>${thumb ? `<img class="product-thumb" src="${thumb}" />` : `<div class="product-thumb"></div>`}</td>
           <td>
             <div class="product-title-cell">${escapeHtml(p.title || p.lpn || "(untitled)")}</div>
-            <div class="product-meta-cell">${escapeHtml([p.lpn, p.sku, p.asin].filter(Boolean).join(" · "))}</div>
+            <div class="product-meta-cell">${escapeHtml([p.sku, p.asin].filter(Boolean).join(" · "))}</div>
           </td>
+          <td class="product-meta-cell">${escapeHtml(p.lpn || "")}</td>
           <td><span class="badge badge-${p.status}">${p.status}</span></td>
           <td class="product-meta-cell">${p.price ? "£" + escapeHtml(p.price) : ""}</td>
+          <td class="menu-cell">
+            <button type="button" class="row-menu-btn" data-menu-id="${p.id}">&#8942;</button>
+            <div class="row-menu" id="row-menu-${p.id}" hidden>
+              <a href="/inventory/products/${p.id}/edit" data-link>Edit</a>
+              ${shopifyUrl ? `<a href="${shopifyUrl}" target="_blank" rel="noopener">View in Shopify</a>` : ""}
+              ${p.status !== "archived" ? `<button type="button" data-action="archive" data-id="${p.id}">Archive</button>` : `<button type="button" data-action="draft" data-id="${p.id}">Move to Draft</button>`}
+            </div>
+          </td>
         </tr>`;
       })
       .join("");
     container.innerHTML = `
       <table class="product-table">
-        <thead><tr><th></th><th>Product</th><th>Status</th><th>Price</th></tr></thead>
+        <thead><tr><th></th><th>Product</th><th>LPN</th><th>Status</th><th>Price</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
     container.querySelectorAll(".product-row").forEach((row) => {
-      row.addEventListener("click", () => navigate(`/inventory/products/${row.dataset.id}`));
+      row.addEventListener("click", (e) => {
+        if (e.target.closest(".menu-cell")) return;
+        navigate(`/inventory/products/${row.dataset.id}`);
+      });
     });
+    wireRowMenus(container);
+  }
+
+  function shopifyProductUrl(p) {
+    if (!p.shopify_product_id || !p.shop_domain) return "";
+    const numericId = p.shopify_product_id.split("/").pop();
+    return `https://${p.shop_domain}/admin/products/${numericId}`;
+  }
+
+  function wireRowMenus(container) {
+    container.querySelectorAll(".row-menu-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const menu = document.getElementById(`row-menu-${btn.dataset.menuId}`);
+        const wasOpen = !menu.hidden;
+        container.querySelectorAll(".row-menu").forEach((m) => (m.hidden = true));
+        menu.hidden = wasOpen;
+      });
+    });
+    container.querySelectorAll(".row-menu [data-action]").forEach((actionBtn) => {
+      actionBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = actionBtn.dataset.id;
+        const status = actionBtn.dataset.action === "archive" ? "archived" : "draft";
+        await apiJson(`/api/inventory/products/${id}/status`, "POST", { status });
+        render();
+      });
+    });
+    document.addEventListener(
+      "click",
+      () => container.querySelectorAll(".row-menu").forEach((m) => (m.hidden = true)),
+      { once: true }
+    );
   }
 
   // ====================================================================

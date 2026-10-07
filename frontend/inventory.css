@@ -208,6 +208,24 @@ a { color: inherit; }
 
 .empty-text { color: var(--text-muted); font-size: 14px; text-align: center; margin-top: 40px; }
 
+.menu-cell { position: relative; width: 36px; text-align: right; }
+.row-menu-btn {
+  background: none; border: none; cursor: pointer; font-size: 18px; line-height: 1;
+  color: var(--text-muted); padding: 6px 8px; border-radius: 6px;
+}
+.row-menu-btn:hover { background: var(--bg); color: var(--text); }
+.row-menu {
+  position: absolute; right: 0; top: 100%; z-index: 10;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); min-width: 160px; padding: 6px; display: flex; flex-direction: column;
+}
+.row-menu a, .row-menu button {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  padding: 8px 10px; border-radius: 6px; font-size: 13px; color: var(--text);
+  text-decoration: none; cursor: pointer; font-family: inherit;
+}
+.row-menu a:hover, .row-menu button:hover { background: var(--accent-soft); color: var(--accent); }
+
 /* mobile: cards instead of a table */
 @media (max-width: 640px) {
   .product-table thead { display: none; }
@@ -216,7 +234,8 @@ a { color: inherit; }
     display: flex; align-items: center; gap: 10px; padding: 10px 14px;
   }
   .product-row td { padding: 0; border: none; }
-  .product-row td:not(:first-child):not(:nth-child(2)) { display: none; }
+  .product-row td:not(:first-child):not(:nth-child(2)):not(:last-child) { display: none; }
+  .product-row { position: relative; }
 }
 
 /* -------------------------------------------------------------- single product view */

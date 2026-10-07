@@ -664,6 +664,8 @@ def _product_json(product):
     product["images"] = [
         {**img, "url": _image_url(img["filename"])} for img in product.get("images", [])
     ]
+    if product.get("shopify_product_id"):
+        product["shop_domain"] = shopify_client.get_shop_domain()
     return product
 
 
@@ -723,6 +725,17 @@ def update_inventory_product(product_id):
         return jsonify({"error": "Not found"}), 404
     data = request.get_json(silent=True) or {}
     inventory_db.update_product(product_id, data)
+    return jsonify(_product_json(inventory_db.get_product(product_id)))
+
+
+@app.route("/api/inventory/products/<int:product_id>/status", methods=["POST"])
+def set_inventory_product_status(product_id):
+    if not inventory_db.get_product(product_id):
+        return jsonify({"error": "Not found"}), 404
+    status = (request.get_json(silent=True) or {}).get("status", "")
+    if status not in inventory_db.STATUSES:
+        return jsonify({"error": f"Unknown status: {status}"}), 400
+    inventory_db.set_status(product_id, status)
     return jsonify(_product_json(inventory_db.get_product(product_id)))
 
 
