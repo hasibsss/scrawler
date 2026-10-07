@@ -76,6 +76,32 @@ def _check_user_errors(payload, mutation_name):
         raise ShopifyError(f"{mutation_name}: {errors}")
 
 
+def get_inventory_quantities(product_ids):
+    """Returns {product_id: total_inventory_quantity} for a batch of product
+    GIDs, summing across every variant (there's normally just one). Used to
+    detect "this sold out" without needing Shopify to push anything to us."""
+    if not product_ids:
+        return {}
+    query = """
+    query($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Product {
+          id
+          variants(first: 25) { edges { node { inventoryQuantity } } }
+        }
+      }
+    }
+    """
+    data = _graphql(query, {"ids": product_ids})
+    quantities = {}
+    for node in data["nodes"]:
+        if not node:
+            continue
+        total = sum(e["node"]["inventoryQuantity"] or 0 for e in node["variants"]["edges"])
+        quantities[node["id"]] = total
+    return quantities
+
+
 def find_variant_by_barcode(barcode):
     """Returns (product_gid, variant_gid) for an existing product matching this
     barcode, or (None, None) if nothing matches."""
@@ -108,7 +134,10 @@ def _create_product(payload):
     query = """
     mutation($input: ProductInput!) {
       productCreate(input: $input) {
-        product { id variants(first: 1) { edges { node { id } } } }
+        product {
+          id
+          variants(first: 1) { edges { node { id inventoryItem { id } } } }
+        }
         userErrors { field message }
       }
     }
@@ -125,8 +154,8 @@ def _create_product(payload):
     data = _graphql(query, variables)
     _check_user_errors(data, "productCreate")
     product = data["productCreate"]["product"]
-    variant_id = product["variants"]["edges"][0]["node"]["id"]
-    return product["id"], variant_id
+    variant_node = product["variants"]["edges"][0]["node"]
+    return product["id"], variant_node["id"], variant_node["inventoryItem"]["id"]
 
 
 def _update_product(product_id, payload):
@@ -150,7 +179,37 @@ def _update_product(product_id, payload):
     _check_user_errors(data, "productUpdate")
 
 
-def _update_variant(product_id, variant_id, payload):
+def _set_initial_inventory(inventory_item_id, quantity=1):
+    """Sets starting stock on a just-created variant. Has to be a separate
+    call -- productVariantsBulkUpdate rejects inventoryQuantities outright
+    ("can only be provided during create"), and productCreate's own variant
+    input doesn't expose it either, so this runs right after."""
+    query = """
+    mutation($input: InventorySetQuantitiesInput!) {
+      inventorySetQuantities(input: $input) {
+        userErrors { field message }
+      }
+    }
+    """
+    variables = {
+        "input": {
+            "name": "available",
+            "reason": "received",
+            "ignoreCompareQuantity": True,
+            "quantities": [
+                {
+                    "inventoryItemId": inventory_item_id,
+                    "locationId": config.SHOPIFY_DEFAULT_LOCATION_ID,
+                    "quantity": quantity,
+                }
+            ],
+        }
+    }
+    data = _graphql(query, variables)
+    _check_user_errors(data, "inventorySetQuantities")
+
+
+def _update_variant(product_id, variant_id, payload, is_new=False):
     inventory_item = {}
     if payload.get("sku"):
         inventory_item["sku"] = payload["sku"]
@@ -158,6 +217,8 @@ def _update_variant(product_id, variant_id, payload):
         inventory_item["measurement"] = {
             "weight": {"value": float(payload["weight"]), "unit": "KILOGRAMS"}
         }
+    if is_new:
+        inventory_item["tracked"] = True
 
     variant_input = {"id": variant_id}
     if payload.get("barcode"):
@@ -303,8 +364,9 @@ def push_product(payload):
         _add_images(existing_product_id, [], payload.get("local_images") or [])
         return {"status": "updated", "product_id": existing_product_id}
 
-    product_id, variant_id = _create_product(payload)
-    _update_variant(product_id, variant_id, payload)
+    product_id, variant_id, inventory_item_id = _create_product(payload)
+    _update_variant(product_id, variant_id, payload, is_new=True)
+    _set_initial_inventory(inventory_item_id)
     _set_metafields(product_id, payload)
     _add_images(product_id, payload.get("images") or [], payload.get("local_images") or [])
     return {"status": "created", "product_id": product_id}

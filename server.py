@@ -787,11 +787,56 @@ def list_inventory_product(product_id):
         return jsonify({"error": str(exc)[:300]}), 500
 
 
+SOLD_SYNC_CHUNK_SIZE = 100
+SOLD_SYNC_INTERVAL_SECONDS = 15 * 60
+
+
+def _sync_sold_status():
+    """Checks every 'listed' product's current Shopify stock and flips it to
+    'sold' once it hits zero -- the only way we find out an item sold, since
+    Shopify can't push to this (private, Tailscale-only) server itself."""
+    products = inventory_db.listed_products()
+    newly_sold = 0
+    for i in range(0, len(products), SOLD_SYNC_CHUNK_SIZE):
+        chunk = products[i : i + SOLD_SYNC_CHUNK_SIZE]
+        ids = [p["shopify_product_id"] for p in chunk]
+        try:
+            quantities = shopify_client.get_inventory_quantities(ids)
+        except Exception:
+            continue  # transient API hiccup -- just try this batch again next sync
+        for p in chunk:
+            qty = quantities.get(p["shopify_product_id"])
+            if qty is not None and qty <= 0:
+                inventory_db.set_status(p["id"], "sold")
+                newly_sold += 1
+    return newly_sold
+
+
+@app.route("/api/inventory/sync-sold", methods=["POST"])
+def sync_sold_status_route():
+    try:
+        count = _sync_sold_status()
+    except Exception as exc:
+        return jsonify({"error": str(exc)[:300]}), 500
+    return jsonify({"newly_sold": count})
+
+
+def _sold_sync_loop():
+    while True:
+        time.sleep(SOLD_SYNC_INTERVAL_SECONDS)
+        try:
+            _sync_sold_status()
+        except Exception:
+            pass  # next tick will retry
+
+
 if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "5000"))
 
     if host in ("127.0.0.1", "localhost"):
         threading.Timer(1.0, lambda: webbrowser.open(f"http://{host}:{port}")).start()
+
+    threading.Thread(target=_sold_sync_loop, daemon=True).start()
 
     app.run(host=host, port=port, threaded=True)

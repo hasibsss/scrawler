@@ -22,6 +22,12 @@ STORAGE_STATE_PATH = "amazon_enricher/.session_state.json"
 SHOPIFY_CREDENTIALS_PATH = "amazon_enricher/.shopify_credentials.json"
 SHOPIFY_API_VERSION = "2026-01"
 
+# Location new products get 1 unit of starting inventory at. Every item we
+# list is a unique, single-quantity piece, so "quantity hits 0" is how we
+# later detect "this sold" -- without ever setting an initial 1, a brand new
+# listing would already read as sold on the very first check.
+SHOPIFY_DEFAULT_LOCATION_ID = "gid://shopify/Location/116707950773"
+
 # Google service account key for the "Google Sheet Sync" mode.
 GOOGLE_CREDENTIALS_PATH = "amazon_enricher/.google_credentials.json"
 

@@ -8,6 +8,8 @@
   const statusFilter = document.getElementById("status-filter");
   const productList = document.getElementById("product-list");
   const emptyText = document.getElementById("empty-text");
+  const syncSoldBtn = document.getElementById("sync-sold-btn");
+  const syncNote = document.getElementById("sync-note");
 
   const fields = {
     lpn: document.getElementById("f-lpn"),
@@ -89,6 +91,25 @@
     searchTimer = setTimeout(loadList, 300);
   });
   statusFilter.addEventListener("change", loadList);
+
+  syncSoldBtn.addEventListener("click", async () => {
+    syncSoldBtn.disabled = true;
+    syncSoldBtn.textContent = "Checking Shopify...";
+    syncNote.textContent = "";
+    try {
+      const res = await fetch("/api/inventory/sync-sold", { method: "POST" });
+      const result = await res.json();
+      syncNote.textContent = res.ok
+        ? `${result.newly_sold} item${result.newly_sold === 1 ? "" : "s"} marked sold.`
+        : result.error || "Sync failed.";
+      if (res.ok) loadList();
+    } catch (err) {
+      syncNote.textContent = "Couldn't reach the server.";
+    } finally {
+      syncSoldBtn.disabled = false;
+      syncSoldBtn.textContent = "Sync sold status";
+    }
+  });
 
   // -- detail/edit view -----------------------------------------------------
 

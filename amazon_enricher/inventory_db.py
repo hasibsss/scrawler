@@ -127,6 +127,16 @@ def get_product(product_id):
         return product
 
 
+def listed_products():
+    """Every product currently marked 'listed' with a known Shopify product
+    id -- the set that needs checking for "has this sold out yet"."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, shopify_product_id FROM products WHERE status = 'listed' AND shopify_product_id IS NOT NULL"
+        )
+        return [dict(r) for r in rows]
+
+
 def search_products(query="", status=None, limit=50, offset=0):
     sql = "SELECT * FROM products WHERE 1=1"
     params = []
