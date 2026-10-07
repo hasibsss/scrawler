@@ -25,6 +25,11 @@ SHOPIFY_API_VERSION = "2026-01"
 # Google service account key for the "Google Sheet Sync" mode.
 GOOGLE_CREDENTIALS_PATH = "amazon_enricher/.google_credentials.json"
 
+# Warehouse intake app: local SQLite database and photo storage, both on
+# this server's own disk (not synced anywhere else).
+INVENTORY_DB_PATH = "amazon_enricher/inventory.db"
+INVENTORY_IMAGES_DIR = "inventory_images"
+
 # (namespace, key) for each product metafield, as already defined on the store
 # (verified against the store's actual metafield definitions -- do not guess new ones).
 SHOPIFY_METAFIELDS = {

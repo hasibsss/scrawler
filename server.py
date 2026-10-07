@@ -30,16 +30,20 @@ from werkzeug.utils import secure_filename
 
 import pandas as pd
 
-from amazon_enricher import config, sheets_client, shopify_client
+from amazon_enricher import config, inventory_db, sheets_client, shopify_client
 from amazon_enricher.matrixify_io import read_input, write_output
 from amazon_enricher.scraper import create_context, fetch_with_retries, save_state
-from amazon_enricher.shopify_io import build_shopify_payload, read_direct_input
+from amazon_enricher.shopify_io import build_inventory_payload, build_shopify_payload, read_direct_input
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(PROJECT_DIR, "uploads")
 OUTPUT_DIR = os.path.join(PROJECT_DIR, "outputs")
+IMAGES_DIR = os.path.join(PROJECT_DIR, config.INVENTORY_IMAGES_DIR)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(IMAGES_DIR, exist_ok=True)
+
+inventory_db.init_db()
 
 app = Flask(__name__, static_folder="frontend", static_url_path="")
 
@@ -644,6 +648,143 @@ def stop_sheet_job(job_id):
             return jsonify({"error": "Unknown job"}), 404
         job["stop_requested"] = True
     return jsonify({"ok": True})
+
+
+## -- Warehouse intake app -------------------------------------------------
+
+ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+
+
+def _image_url(filename):
+    return f"/inventory-images/{filename}"
+
+
+def _product_json(product):
+    product = dict(product)
+    product["images"] = [
+        {**img, "url": _image_url(img["filename"])} for img in product.get("images", [])
+    ]
+    return product
+
+
+@app.route("/inventory")
+def inventory_page():
+    return app.send_static_file("inventory.html")
+
+
+@app.route("/inventory-images/<path:filename>")
+def inventory_image(filename):
+    return send_file(os.path.join(IMAGES_DIR, secure_filename(filename)))
+
+
+@app.route("/api/inventory/products", methods=["GET"])
+def list_inventory_products():
+    query = (request.args.get("q") or "").strip()
+    status = (request.args.get("status") or "").strip() or None
+    limit = int(request.args.get("limit") or 50)
+    offset = int(request.args.get("offset") or 0)
+    products = inventory_db.search_products(query, status, limit, offset)
+    for p in products:
+        p["images"] = []
+        row = inventory_db.get_product(p["id"])
+        p["images"] = row["images"] if row else []
+    return jsonify({"products": [_product_json(p) for p in products]})
+
+
+@app.route("/api/inventory/products", methods=["POST"])
+def create_inventory_product():
+    data = request.get_json(silent=True) or {}
+    lpn = (data.get("lpn") or "").strip()
+    if not lpn:
+        return jsonify({"error": "LPN is required."}), 400
+    try:
+        product_id = inventory_db.create_product(data)
+    except Exception as exc:
+        return jsonify({"error": f"Could not save -- is this LPN already used? ({exc})"}), 400
+    return jsonify(_product_json(inventory_db.get_product(product_id)))
+
+
+@app.route("/api/inventory/products/<int:product_id>", methods=["GET"])
+def get_inventory_product(product_id):
+    product = inventory_db.get_product(product_id)
+    if not product:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(_product_json(product))
+
+
+@app.route("/api/inventory/products/<int:product_id>", methods=["PUT"])
+def update_inventory_product(product_id):
+    if not inventory_db.get_product(product_id):
+        return jsonify({"error": "Not found"}), 404
+    data = request.get_json(silent=True) or {}
+    inventory_db.update_product(product_id, data)
+    return jsonify(_product_json(inventory_db.get_product(product_id)))
+
+
+@app.route("/api/inventory/products/<int:product_id>/images", methods=["POST"])
+def upload_inventory_image(product_id):
+    if not inventory_db.get_product(product_id):
+        return jsonify({"error": "Not found"}), 404
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "No file uploaded."}), 400
+    ext = upload.filename.rsplit(".", 1)[-1].lower() if "." in upload.filename else ""
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        return jsonify({"error": "Only jpg/png/webp images are allowed."}), 400
+    filename = f"{product_id}_{uuid.uuid4().hex}.{ext}"
+    upload.save(os.path.join(IMAGES_DIR, filename))
+    image_id = inventory_db.add_image(product_id, filename)
+    return jsonify({"id": image_id, "filename": filename, "url": _image_url(filename)})
+
+
+@app.route("/api/inventory/images/<int:image_id>", methods=["DELETE"])
+def delete_inventory_image(image_id):
+    filename = inventory_db.delete_image(image_id)
+    if filename:
+        try:
+            os.remove(os.path.join(IMAGES_DIR, filename))
+        except OSError:
+            pass
+    return jsonify({"ok": True})
+
+
+@app.route("/api/inventory/products/<int:product_id>/list", methods=["POST"])
+def list_inventory_product(product_id):
+    product = inventory_db.get_product(product_id)
+    if not product:
+        return jsonify({"error": "Not found"}), 404
+    if not product.get("asin"):
+        return jsonify({"error": "This product has no ASIN set -- add one before listing."}), 400
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--headless=old"])
+            context = create_context(browser, config.STORAGE_STATE_PATH)
+            try:
+                scrape_result = fetch_with_retries(context, product["asin"], config.DEFAULT_DOMAIN)
+            finally:
+                try:
+                    save_state(context, config.STORAGE_STATE_PATH)
+                except Exception:
+                    pass
+                context.close()
+                browser.close()
+
+        if scrape_result["status"] != "ok":
+            return jsonify({"error": f"Amazon scrape failed: {scrape_result['status']}"}), 502
+
+        local_image_paths = [os.path.join(IMAGES_DIR, img["filename"]) for img in product["images"]]
+        payload = build_inventory_payload(product, scrape_result, local_image_paths)
+        push_result = shopify_client.push_product(payload)
+        inventory_db.set_status(product_id, "listed", shopify_product_id=push_result["product_id"])
+        return jsonify(
+            {
+                "status": push_result["status"],
+                "shop_admin_url": f"https://{shopify_client.get_shop_domain()}/admin/products",
+            }
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)[:300]}), 500
 
 
 if __name__ == "__main__":

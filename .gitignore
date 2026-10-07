@@ -19,6 +19,8 @@ outputs/
 server.log
 server.err.log
 server.pid
+amazon_enricher/inventory.db
+inventory_images/
 
 # Editor / tooling
 .claude/

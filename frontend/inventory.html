@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Warehouse Inventory</title>
+  <link rel="stylesheet" href="/inventory.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <h1>Warehouse Inventory</h1>
+      <button class="btn btn-primary" id="new-btn">+ New Item</button>
+    </header>
+
+    <!-- LIST VIEW -->
+    <section id="list-view">
+      <div class="search-row">
+        <input type="search" id="search-input" placeholder="Search by SKU, LPN, ASIN or title..." />
+        <select id="status-filter">
+          <option value="">All statuses</option>
+          <option value="draft">Draft</option>
+          <option value="ready">Ready</option>
+          <option value="listed">Listed</option>
+          <option value="sold">Sold</option>
+          <option value="archived">Archived</option>
+        </select>
+      </div>
+      <ul class="product-list" id="product-list"></ul>
+      <p class="empty-text" id="empty-text" hidden>No items found.</p>
+    </section>
+
+    <!-- DETAIL / EDIT VIEW -->
+    <section id="detail-view" hidden>
+      <button class="btn btn-ghost" id="back-btn">&larr; Back to list</button>
+
+      <div class="card">
+        <div class="field-row">
+          <label>LPN *<input type="text" id="f-lpn" /></label>
+          <label>SKU<input type="text" id="f-sku" /></label>
+        </div>
+        <div class="field-row">
+          <label>ASIN<input type="text" id="f-asin" /></label>
+          <label>Condition<input type="text" id="f-condition" /></label>
+        </div>
+        <div class="field-row">
+          <label>UPC<input type="text" id="f-upc" /></label>
+          <label>EAN<input type="text" id="f-ean" /></label>
+        </div>
+        <div class="field-row">
+          <label>Price<input type="text" id="f-price" inputmode="decimal" /></label>
+          <label>Weight (kg)<input type="text" id="f-weight" inputmode="decimal" /></label>
+        </div>
+        <label class="full">Category<input type="text" id="f-category" /></label>
+        <label class="full">Title<input type="text" id="f-title" placeholder="Leave blank to use Amazon's title" /></label>
+        <label class="full">Description<textarea id="f-description" rows="4" placeholder="Leave blank to use Amazon's description"></textarea></label>
+
+        <div class="photos-block">
+          <p class="label">Photos</p>
+          <div class="photo-grid" id="photo-grid"></div>
+          <label class="btn btn-secondary photo-add-btn">
+            + Add photo
+            <input type="file" id="photo-input" accept="image/*" capture="environment" multiple hidden />
+          </label>
+        </div>
+
+        <p class="error-text" id="form-error" hidden></p>
+        <p class="status-line" id="status-line"></p>
+
+        <div class="actions">
+          <button class="btn btn-primary btn-large" id="save-btn">Save</button>
+          <button class="btn btn-secondary btn-large" id="list-btn">List on Shopify</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="/inventory.js"></script>
+</body>
+</html>

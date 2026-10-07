@@ -7,6 +7,7 @@ and, when present, are used as-is rather than overwritten by the scrape --
 see matrixify_io.py's docstring-level convention, which this mirrors.
 """
 
+import html as html_module
 import re
 
 import pandas as pd
@@ -146,4 +147,69 @@ def build_shopify_payload(row, asin_col, lpn_col, result):
             title, result.get("bullets")
         )
 
+    return payload
+
+
+def build_inventory_payload(product, result, local_image_paths=None):
+    """Builds a push_product() payload from a warehouse-app database record
+    plus its Amazon scrape result.
+
+    Unlike the sheet-based flows, a manually-entered title/description here
+    takes priority over the Amazon scrape (the warehouse operator wrote it
+    on purpose) -- the scrape only fills in whatever they left blank, plus
+    always supplies images/specs/identifiers the way it does everywhere else.
+    """
+    asin = (product.get("asin") or "").strip()
+    lpn = (product.get("lpn") or "").strip()
+
+    title = (product.get("title") or "").strip() or result.get("title") or ""
+
+    manual_description = (product.get("description") or "").strip()
+    manual_html = f"<p>{html_module.escape(manual_description)}</p>" if manual_description else ""
+    auto_html = _build_body_html(
+        result.get("bullets") or [],
+        result.get("specs") or {},
+        None,
+        result.get("review_count_value"),
+        identifiers={"asin": asin, "upc": product.get("upc") or "", "ean": product.get("ean") or ""},
+    )
+    body_html = f"{manual_html}\n{auto_html}" if manual_html else auto_html
+
+    weight_raw = str(product.get("weight") or "").strip()
+    weight = None
+    if weight_raw:
+        try:
+            weight = float(weight_raw)
+        except ValueError:
+            weight = None
+
+    from . import config
+
+    specs = result.get("specs") or {}
+    spec_fields = {}
+    for key, value in specs.items():
+        slot = config.SPECIFICATIONS_KEY_MAP.get(str(key).strip().lower())
+        if slot and slot not in spec_fields:
+            spec_fields[slot] = value
+    spec_fields.setdefault("specifications_weight", weight_raw or None)
+    spec_fields.setdefault("specifications_country_of_origin", "China")
+
+    payload = {
+        "title": title,
+        "body_html": body_html,
+        "images": result.get("images") or [],
+        "local_images": local_image_paths or [],
+        "barcode": lpn,
+        "lpn": lpn,
+        "price": str(product.get("price") or ""),
+        "weight": weight,
+        "sku": str(product.get("sku") or ""),
+        "condition": str(product.get("condition") or ""),
+        "rating_count": result.get("review_count_value"),
+        "asin": asin,
+        "ean": str(product.get("ean") or ""),
+        "upc": str(product.get("upc") or ""),
+        "category": str(product.get("category") or "") or result.get("category") or "",
+    }
+    payload.update(spec_fields)
     return payload

@@ -7,6 +7,8 @@ metafields, and (create only) gallery images.
 """
 
 import json
+import mimetypes
+import os
 import re
 import time
 
@@ -216,10 +218,58 @@ def _set_metafields(product_id, payload):
     _check_user_errors(data, "metafieldsSet")
 
 
-def _add_images(product_id, images):
-    if not images:
+def _staged_upload_file(file_path):
+    """Uploads a local file to Shopify's staging storage and returns the
+    resourceUrl to reference it from productCreateMedia -- needed because
+    Shopify fetches image URLs itself and can't reach a file that only
+    exists on our own (private) server."""
+    filename = os.path.basename(file_path)
+    mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    file_size = os.path.getsize(file_path)
+
+    query = """
+    mutation($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) {
+        stagedTargets { url resourceUrl parameters { name value } }
+        userErrors { field message }
+      }
+    }
+    """
+    variables = {
+        "input": [
+            {
+                "filename": filename,
+                "mimeType": mime_type,
+                "httpMethod": "POST",
+                "resource": "IMAGE",
+                "fileSize": str(file_size),
+            }
+        ]
+    }
+    data = _graphql(query, variables)
+    _check_user_errors(data, "stagedUploadsCreate")
+    target = data["stagedUploadsCreate"]["stagedTargets"][0]
+
+    form_data = {p["name"]: p["value"] for p in target["parameters"]}
+    with open(file_path, "rb") as f:
+        resp = requests.post(
+            target["url"], data=form_data, files={"file": (filename, f, mime_type)}, timeout=60
+        )
+    resp.raise_for_status()
+    return target["resourceUrl"]
+
+
+def _add_images(product_id, image_urls, local_image_paths=None):
+    media_sources = list(image_urls or [])
+    for file_path in local_image_paths or []:
+        try:
+            media_sources.append(_staged_upload_file(file_path))
+        except Exception as exc:
+            raise ShopifyError(f"Uploading {file_path}: {exc}")
+
+    if not media_sources:
         return
-    media = [{"originalSource": url, "mediaContentType": "IMAGE"} for url in images]
+    media = [{"originalSource": url, "mediaContentType": "IMAGE"} for url in media_sources]
     query = """
     mutation($productId: ID!, $media: [CreateMediaInput!]!) {
       productCreateMedia(productId: $productId, media: $media) {
@@ -247,10 +297,14 @@ def push_product(payload):
         _update_product(existing_product_id, payload)
         _update_variant(existing_product_id, existing_variant_id, payload)
         _set_metafields(existing_product_id, payload)
+        # local_images (e.g. warehouse photos) are added here too, not just on
+        # create -- unlike the Amazon gallery, they don't already exist on the
+        # product, so there's nothing to duplicate.
+        _add_images(existing_product_id, [], payload.get("local_images") or [])
         return {"status": "updated", "product_id": existing_product_id}
 
     product_id, variant_id = _create_product(payload)
     _update_variant(product_id, variant_id, payload)
     _set_metafields(product_id, payload)
-    _add_images(product_id, payload.get("images") or [])
+    _add_images(product_id, payload.get("images") or [], payload.get("local_images") or [])
     return {"status": "created", "product_id": product_id}
